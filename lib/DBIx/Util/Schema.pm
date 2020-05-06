@@ -32,9 +32,15 @@ our @EXPORT_OK = qw(
 # TODO:
 #                              primary_key_columns
 #                              has_primary_key
-#                              has_index_on
+#                              has_index_on (has_index?)
 #                              has_unique_index_on
 #                              has_a_unique_index
+#
+#                              has_foreign_key
+#
+#                              is_null_column
+#                              is_not_null_column
+#                              is_unique_column
 
 our %SPEC;
 
@@ -476,6 +482,8 @@ Currently only tested on SQLite, MySQL, and Postgres.
 
 
 =head1 SEE ALSO
+
+L<Test::DBUnit> currently has more methods.
 
 L<DBI>
 
