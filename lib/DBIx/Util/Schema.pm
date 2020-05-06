@@ -12,16 +12,29 @@ use Log::ger;
 
 use List::Util qw(first);
 
-use Exporter;
-our @ISA = qw(Exporter);
+use Exporter 'import';
 our @EXPORT_OK = qw(
-                       list_tables
-                       list_columns
-                       list_indexes
+                             table_exists
+                             has_table
+                             has_all_tables
+                             has_any_table
 
-                       table_exists
-                       column_exists
+                             column_exists
+                             has_column
+                             has_all_columns
+                             has_any_column
+
+                             list_tables
+                             list_columns
+                             list_indexes
                );
+
+# TODO:
+#                              primary_key_columns
+#                              has_primary_key
+#                              has_index_on
+#                              has_unique_index_on
+#                              has_a_unique_index
 
 our %SPEC;
 
@@ -30,7 +43,7 @@ $SPEC{':package'} = {
     summary => 'Utility routines related to database schema',
 };
 
-my %arg0_dbh = (
+our %arg0_dbh = (
     dbh => {
         schema => ['obj*'],
         summary => 'DBI database handle',
@@ -39,7 +52,7 @@ my %arg0_dbh = (
     },
 );
 
-my %arg1_table = (
+our %arg1_table = (
     table => {
         schema => ['str*'],
         summary => 'Table name',
@@ -48,9 +61,38 @@ my %arg1_table = (
     },
 );
 
-$SPEC{check_table_exists} = {
+our %arg1rest_tables = (
+    tables => {
+        schema => ['array*', of=>'str*'],
+        summary => 'Table names',
+        req => 1,
+        pos => 1,
+        slurpy => 1,
+    },
+);
+
+our %arg2_column = (
+    column => {
+        schema => ['str*'],
+        summary => 'Table column name',
+        req => 1,
+        pos => 2,
+    },
+);
+
+our %arg2rest_columns = (
+    columns => {
+        schema => ['array*', of=>'str*'],
+        summary => 'Table column names',
+        req => 1,
+        pos => 2,
+        slurpy => 1,
+    },
+);
+
+$SPEC{has_table} = {
     v => 1.1,
-    summary => 'Check whether a table exists',
+    summary => 'Check whether database has a certain table',
     args => {
         %arg0_dbh,
         %arg1_table,
@@ -58,16 +100,132 @@ $SPEC{check_table_exists} = {
     args_as => "array",
     result_naked => 1,
 };
-sub check_table_exists {
-    my ($dbh, $name) = @_;
+sub has_table {
+    my ($dbh, $table) = @_;
     my $sth;
-    if ($name =~ /(.+)\.(.+)/) {
+    if ($table =~ /(.+)\.(.+)/) {
         $sth = $dbh->table_info(undef, $1, $2, undef);
     } else {
-        $sth = $dbh->table_info(undef, undef, $name, undef);
+        $sth = $dbh->table_info(undef, undef, $table, undef);
     }
 
     $sth->fetchrow_hashref ? 1:0;
+}
+
+# alias for has_table
+$SPEC{table_exists} = { %{$SPEC{has_table}}, summary=>'Alias for has_table()' };
+*table_exists = \&has_table;
+
+$SPEC{has_all_tables} = {
+    v => 1.1,
+    summary => 'Check whether database has all specified tables',
+    args => {
+        %arg0_dbh,
+        %arg1rest_tables,
+    },
+    args_as => "array",
+    result_naked => 1,
+};
+sub has_all_tables {
+    my ($dbh, @tables) = @_;
+    my $sth;
+    for my $table (@tables) {
+        if ($table =~ /(.+)\.(.+)/) {
+            $sth = $dbh->table_info(undef, $1, $2, undef);
+        } else {
+            $sth = $dbh->table_info(undef, undef, $table, undef);
+        }
+        return 0 unless $sth->fetchrow_hashref;
+    }
+    1;
+}
+
+$SPEC{has_any_table} = {
+    v => 1.1,
+    summary => 'Check whether database has at least one of specified tables',
+    args => {
+        %arg0_dbh,
+        %arg1rest_tables,
+    },
+    args_as => "array",
+    result_naked => 1,
+};
+sub has_any_table {
+    my ($dbh, @tables) = @_;
+    my $sth;
+    for my $table (@tables) {
+        if ($table =~ /(.+)\.(.+)/) {
+            $sth = $dbh->table_info(undef, $1, $2, undef);
+        } else {
+            $sth = $dbh->table_info(undef, undef, $table, undef);
+        }
+        return 1 if $sth->fetchrow_hashref;
+    }
+    @tables ? 0 : 1;
+}
+
+$SPEC{has_column} = {
+    v => 1.1,
+    summary => 'Check whether a table has a specified column',
+    args => {
+        %arg0_dbh,
+        %arg1_table,
+        %arg2_column,
+    },
+    args_as => "array",
+    result_naked => 1,
+};
+sub has_column {
+    my ($dbh, $table, $column) = @_;
+    return 0 unless has_table($dbh, $table);
+    my @columns = list_columns($dbh, $table);
+    (grep {$_->{COLUMN_NAME} eq $column} @columns) ? 1:0;
+}
+
+# alias for has_column
+$SPEC{column_exists} = { %{$SPEC{has_column}}, summary=>'Alias for has_column()' };
+*column_exists = \&has_column;
+
+$SPEC{has_all_columns} = {
+    v => 1.1,
+    summary => 'Check whether a table has all specified columns',
+    args => {
+        %arg0_dbh,
+        %arg1_table,
+        %arg2rest_columns,
+    },
+    args_as => "array",
+    result_naked => 1,
+};
+sub has_all_columns {
+    my ($dbh, $table, @columns) = @_;
+    return 0 unless has_table($dbh, $table);
+    my @all_columns = list_columns($dbh, $table);
+    for my $column (@columns) {
+        unless (grep {$_->{COLUMN_NAME} eq $column} @all_columns) { return 0 }
+    }
+    1;
+}
+
+$SPEC{has_any_column} = {
+    v => 1.1,
+    summary => 'Check whether a table has at least one of specified columns',
+    args => {
+        %arg0_dbh,
+        %arg1_table,
+        %arg2rest_columns,
+    },
+    args_as => "array",
+    result_naked => 1,
+};
+sub has_any_column {
+    my ($dbh, $table, @columns) = @_;
+    return 0 unless has_table($dbh, $table);
+    my @all_columns = list_columns($dbh, $table);
+    for my $column (@columns) {
+        if (grep {$_->{COLUMN_NAME} eq $column} @all_columns) { return 1 }
+    }
+    @columns ? 0:1;
 }
 
 $SPEC{list_tables} = {
@@ -262,10 +420,6 @@ sub list_indexes {
     @res;
 }
 
-# old name, deprecated
-$SPEC{list_table_indexes} = $SPEC{list_indexes};
-*list_table_indexes = \&list_indexes;
-
 $SPEC{list_columns} = {
     v => 1.1,
     summary => 'List columns of a table',
@@ -294,267 +448,35 @@ sub list_columns {
     sort @res;
 }
 
-sub _diff_column_schema {
-    my ($c1, $c2) = @_;
-
-    my $res = {};
-    {
-        if ($c1->{TYPE_NAME} ne $c2->{TYPE_NAME}) {
-            $res->{old_type} = $c1->{TYPE_NAME};
-            $res->{new_type} = $c2->{TYPE_NAME};
-            last;
-        }
-        if ($c1->{NULLABLE} xor $c2->{NULLABLE}) {
-            $res->{old_nullable} = $c1->{NULLABLE};
-            $res->{new_nullable} = $c2->{NULLABLE};
-        }
-        if (defined $c1->{CHAR_OCTET_LENGTH}) {
-            if ($c1->{CHAR_OCTET_LENGTH} != $c2->{CHAR_OCTET_LENGTH}) {
-                $res->{old_length} = $c1->{CHAR_OCTET_LENGTH};
-                $res->{new_length} = $c2->{CHAR_OCTET_LENGTH};
-            }
-        }
-        if (defined $c1->{DECIMAL_DIGITS}) {
-            if ($c1->{DECIMAL_DIGITS} != $c2->{DECIMAL_DIGITS}) {
-                $res->{old_digits} = $c1->{DECIMAL_DIGITS};
-                $res->{new_digits} = $c2->{DECIMAL_DIGITS};
-            }
-        }
-        if (($c1->{mysql_is_auto_increment} // 0) != ($c2->{mysql_is_auto_increment} // 0)) {
-            $res->{old_auto_increment} = $c1->{mysql_is_auto_increment} // 0;
-            $res->{new_auto_increment} = $c2->{mysql_is_auto_increment} // 0;
-        }
-    }
-    $res;
-}
-
-sub _diff_table_schema {
-    my ($dbh1, $dbh2, $table1, $table2) = @_;
-
-    my @columns1 = list_columns($dbh1, $table1);
-    my @columns2 = list_columns($dbh2, $table2);
-
-    log_trace("columns1: %s ...", \@columns1);
-    log_trace("columns2: %s ...", \@columns2);
-
-    my (@added, @deleted, %modified);
-    for my $c1 (@columns1) {
-        my $c1n = $c1->{COLUMN_NAME};
-        my $c2 = first {$c1n eq $_->{COLUMN_NAME}} @columns2;
-        if (defined $c2) {
-            my $tres = _diff_column_schema($c1, $c2);
-            $modified{$c1n} = $tres if %$tres;
-        } else {
-            push @deleted, $c1n;
-        }
-    }
-    for my $c2 (@columns2) {
-        my $c2n = $c2->{COLUMN_NAME};
-        my $c1 = first {$c2n eq $_->{COLUMN_NAME}} @columns1;
-        if (defined $c1) {
-        } else {
-            push @added, $c2n;
-        }
-    }
-
-    my $res = {};
-    $res->{added_columns}    = \@added    if @added;
-    $res->{deleted_columns}  = \@deleted  if @deleted;
-    $res->{modified_columns} = \%modified if %modified;
-    $res;
-}
-
-$SPEC{diff_table_schema} = {
-    v => 1.1,
-    summary => 'Compare schema of two DBI tables',
-    description => <<'_',
-
-This function compares schemas of two DBI tables. You supply two `DBI` database
-handles along with table name and this function will return a hash:
-
-    {
-        deleted_columns => [...],
-        added_columns => [...],
-        modified_columns => {
-            column1 => {
-                old_type => '...',
-                new_type => '...',
-                ...
-            },
-        },
-    }
-
-_
-    args => {
-        %diff_table_args,
-    },
-    args_as => "array",
-    result_naked => 1,
-    "x.perinci.sub.wrapper.disable_validate_args" => 1,
-};
-sub diff_table_schema {
-    my $dbh1    = shift; # VALIDATE_ARG
-    my $dbh2    = shift; # VALIDATE_ARG
-    my $table1  = shift; # VALIDATE_ARG
-    my $table2  = shift // $table1; # VALIDATE_ARG
-
-    #$log->tracef("Comparing table %s vs %s ...", $table1, $table2);
-
-    die "Table $table1 in first database does not exist"
-        unless check_table_exists($dbh1, $table1);
-    die "Table $table2 in second database does not exist"
-        unless check_table_exists($dbh2, $table2);
-    _diff_table_schema($dbh1, $dbh2, $table1, $table2);
-}
-
-$SPEC{table_schema_eq} = {
-    v => 1.1,
-    summary => 'Return true if two DBI tables have the same schema',
-    description => <<'_',
-
-This is basically just a shortcut for:
-
-    my $res = diff_table_schema(...);
-    !%res;
-
-_
-    args => {
-        %diff_table_args,
-    },
-    args_as => "array",
-    result_naked => 1,
-    "x.perinci.sub.wrapper.disable_validate_args" => 1,
-};
-sub table_schema_eq {
-    my $res = diff_table_schema(@_);
-    !%$res;
-}
-
-$SPEC{diff_db_schema} = {
-    v => 1.1,
-    summary => 'Compare schemas of two DBI databases',
-    description => <<'_',
-
-This function compares schemas of two DBI databases. You supply two `DBI`
-database handles and this function will return a hash:
-
-    {
-        # list of tables found in first db but missing in second
-        deleted_tables => ['table1', ...],
-
-        # list of tables found only in the second db
-        added_tables => ['table2', ...],
-
-        # list of modified tables, with details for each
-        modified_tables => {
-            table3 => {
-                deleted_columns => [...],
-                added_columns => [...],
-                modified_columns => {
-                    column1 => {
-                        old_type => '...',
-                        new_type => '...',
-                        ...
-                    },
-                },
-            },
-        },
-    }
-
-_
-    args => {
-        %diff_db_args,
-    },
-    args_as => "array",
-    result_naked => 1,
-    "x.perinci.sub.wrapper.disable_validate_args" => 1,
-};
-sub diff_db_schema {
-    my $dbh1 = shift; # VALIDATE_ARG
-    my $dbh2 = shift; # VALIDATE_ARG
-
-    my @tables1 = list_tables($dbh1);
-    my @tables2 = list_tables($dbh2);
-
-    log_trace("tables1: %s ...", \@tables1);
-    log_trace("tables2: %s ...", \@tables2);
-
-    my (@added, @deleted, %modified);
-    for my $t (@tables1) {
-        if (grep {$_ eq $t} @tables2) {
-            #$log->tracef("Comparing table %s ...", $_);
-            my $tres = _diff_table_schema($dbh1, $dbh2, $t, $t);
-            $modified{$t} = $tres if %$tres;
-        } else {
-            push @deleted, $t;
-        }
-    }
-    for my $t (@tables2) {
-        if (grep {$_ eq $t} @tables1) {
-        } else {
-            push @added, $t;
-        }
-    }
-
-    my $res = {};
-    $res->{added_tables}    = \@added    if @added;
-    $res->{deleted_tables}  = \@deleted  if @deleted;
-    $res->{modified_tables} = \%modified if %modified;
-    $res;
-}
-
-$SPEC{db_schema_eq} = {
-    v => 1.1,
-    summary => 'Return true if two DBI databases have the same schema',
-    description => <<'_',
-
-This is basically just a shortcut for:
-
-    my $res = diff_db_schema(...);
-    !%$res;
-
-_
-    args => {
-        %diff_db_args,
-    },
-    args_as => "array",
-    result_naked => 1,
-    "x.perinci.sub.wrapper.disable_validate_args" => 1,
-};
-sub db_schema_eq {
-    my $res = diff_db_schema(@_);
-    !%$res;
-}
-
 1;
 # ABSTRACT:
 
 =head1 SYNOPSIS
 
- use DBIx::Diff::Schema qw(diff_db_schema diff_table_schema
-                           db_schema_eq table_schema_eq);
+ use DBIx::Util::Schema qw(
+     table_exists
+     column_exists
 
-To compare schemas of whole databases:
+     list_tables
+     list_columns
+     list_indexes
+ );
 
- my $res = diff_db_schema($dbh1, $dbh2);
- say "the two dbs are equal" if db_schema_eq($dbh1, $dbh2);
-
-To compare schemas of a single table from two databases:
-
- my $res = diff_table_schema($dbh1, $dbh2, 'tablename');
- say "the two tables are equal" if table_schema_eq($dbh1, $dbh2, 'tablename');
+ say "Database has table named 'foo'" if table_exists($dbh, "foo");
 
 
 =head1 DESCRIPTION
 
-Currently only tested on Postgres and SQLite.
+L<DBI> already provides methods to query schema information, e.g.
+C<table_info()>, C<column_info()>, C<statistics_info()>, but simple things like
+checking whether a table or a column exists is not straightforward or easy
+enough. This module provides convenience routines for those tasks.
+
+Currently only tested on SQLite, MySQL, and Postgres.
 
 
 =head1 SEE ALSO
 
-L<DBIx::Compare> to compare database contents.
-
-L<diffdb> from L<App::diffdb> which can compare two database (schema as well as
-content) and display the result as the familiar colored unified-style diff.
+L<DBI>
 
 =cut
